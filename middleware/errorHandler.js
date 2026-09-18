@@ -4,6 +4,23 @@
 
 import { AppError } from '../utils/errors.js';
 
+function isProduction() {
+  return process.env.NODE_ENV === 'production';
+}
+
+/** Log errors without dumping secrets / full stacks to clients. */
+function logServerError(label, err) {
+  if (isProduction()) {
+    console.error(label, {
+      name: err?.name,
+      code: err?.code,
+      message: err?.message,
+    });
+    return;
+  }
+  console.error(label, err);
+}
+
 export function notFoundHandler(req, res) {
   return res.status(404).json({
     success: false,
@@ -61,7 +78,7 @@ export function errorHandler(err, req, res, next) {
     });
   }
 
-  console.error('Unhandled error:', err);
+  logServerError('Unhandled error:', err);
   return res.status(500).json({
     success: false,
     message: 'Internal Server Error',
