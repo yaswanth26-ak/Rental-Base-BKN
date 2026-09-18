@@ -20,11 +20,49 @@ process.env.TZ = config.timezone;
 const app = express();
 const PORT = config.port;
 
+/**
+ * Build CORS origin option from CORS_ORIGIN.
+ * - Non-production + "*" / empty: reflect request Origin (local Vite + credentials).
+ * - Production: exact allow-list only (comma-separated); never "*".
+ */
+function buildCorsOriginOption() {
+  const raw = String(config.corsOrigin || '').trim();
+  const origins = raw
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  if (!config.isProduction) {
+    if (origins.length === 0 || (origins.length === 1 && origins[0] === '*')) {
+      return true;
+    }
+  }
+
+  if (config.isProduction && (origins.length === 0 || origins.includes('*'))) {
+    console.warn(
+      'CORS_ORIGIN must be set to explicit frontend origin(s) in production (wildcard is not allowed).'
+    );
+  }
+
+  const allowed = new Set(origins.filter((origin) => origin !== '*'));
+
+  return function corsOrigin(origin, callback) {
+    // Non-browser clients (health checks, curl) often omit Origin.
+    if (!origin) {
+      return callback(null, true);
+    }
+    if (allowed.has(origin)) {
+      return callback(null, true);
+    }
+    return callback(null, false);
+  };
+}
+
 const corsOptions = {
-  origin: true,
+  origin: buildCorsOriginOption(),
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['*'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
 };
 
 app.use(cors(corsOptions));
@@ -39,15 +77,20 @@ app.use('/api/amenities', amenityRoutes);
 app.use('/api/bookings', bookingRoutes);
 app.use('/api/owner', ownerRoutes);
 
-mountSwagger(app);
+if (config.enableSwagger) {
+  mountSwagger(app);
+}
 
 app.get('/', (req, res) => {
-  res.status(200).json({
+  const payload = {
     application: 'rental-booking-backend',
     status: 'up',
     message: 'Rental Booking API is running',
-    docs: '/swagger-ui/index.html',
-  });
+  };
+  if (config.enableSwagger) {
+    payload.docs = '/swagger-ui/index.html';
+  }
+  return res.status(200).json(payload);
 });
 
 app.use(notFoundHandler);
@@ -77,13 +120,17 @@ async function connectDatabaseWithRetry(maxAttempts = 5, delayMs = 3000) {
 async function startServer() {
   try {
     console.log(`Application timezone set to: ${config.timezone}`);
+    console.log(`NODE_ENV=${config.nodeEnv}`);
     await connectDatabaseWithRetry();
 
-    const server = app.listen(PORT, () => {
-      console.log(`Backend running on port ${PORT}`);
-      console.log(`Root: http://localhost:${PORT}/`);
-      console.log(`Health: http://localhost:${PORT}/api/health`);
-      console.log(`Swagger: http://localhost:${PORT}/swagger-ui/index.html`);
+    const server = app.listen(PORT, '0.0.0.0', () => {
+      console.log(`Backend running on 0.0.0.0:${PORT}`);
+      console.log(`Health: /api/health`);
+      if (config.enableSwagger) {
+        console.log(`Swagger: /swagger-ui/index.html`);
+      } else {
+        console.log('Swagger: disabled');
+      }
     });
 
     const shutdown = async (signal) => {
@@ -94,7 +141,7 @@ async function startServer() {
           console.log('Database pool closed');
           process.exit(0);
         } catch (error) {
-          console.error('Error closing database pool:', error);
+          console.error('Error closing database pool:', error?.message || error);
           process.exit(1);
         }
       });
@@ -105,7 +152,7 @@ async function startServer() {
 
     return server;
   } catch (error) {
-    console.error('Server startup failed:', error);
+    console.error('Server startup failed:', error?.message || error);
     try {
       await closePool();
     } catch {

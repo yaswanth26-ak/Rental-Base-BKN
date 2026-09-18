@@ -18,7 +18,7 @@ export async function getHealth(req, res) {
       },
     });
   } catch (error) {
-    console.error('Health check failed:', error.message);
+    console.error('Health check failed:', error?.message || 'database unavailable');
     return res.status(503).json({
       success: false,
       application: 'rental-booking-backend',

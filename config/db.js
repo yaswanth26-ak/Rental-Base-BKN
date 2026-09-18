@@ -27,6 +27,8 @@ const pool = new Pool({
   password: config.db.password,
   database: config.db.database,
   max: config.db.connectionLimit,
+  // Render PostgreSQL requires SSL; local typically does not.
+  ...(config.db.ssl ? { ssl: { rejectUnauthorized: false } } : {}),
 });
 
 /**
